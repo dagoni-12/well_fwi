@@ -46,7 +46,17 @@ def ricker_wavelet(freq_hz: float, dt_s: float, duration_s: float) -> tuple[np.n
 
 def load_las_curves(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     well = Well.from_las(str(path))
-    df = well.df()
+    basis_curve = None
+    for basis_name in ("DEPT", "DEPTH", "MD", "TVD", "DEPTH_MD"):
+        basis_curve = well.get_curve(basis_name)
+        if basis_curve is not None:
+            break
+
+    if basis_curve is None:
+        df = well.df()
+    else:
+        df = well.df(basis=basis_curve.basis)
+
     df.index = df.index.astype(float)
 
     dtc_col = _find_curve(df, ["DTC", "DT", "DTCO", "DT_DTC"])
@@ -59,7 +69,11 @@ def load_las_curves(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return depth_m, dtc, rhob
 
 
-def impedance_reflectivity(depth_m: np.ndarray, dtc_us_per_ft: np.ndarray, rhob_g_cm3: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def impedance_reflectivity(
+    depth_m: np.ndarray,
+    dtc_us_per_ft: np.ndarray,
+    rhob_g_cm3: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     valid = np.isfinite(depth_m) & np.isfinite(dtc_us_per_ft) & np.isfinite(rhob_g_cm3)
     depth_m = depth_m[valid]
     dtc_us_per_ft = dtc_us_per_ft[valid]
@@ -81,7 +95,7 @@ def impedance_reflectivity(depth_m: np.ndarray, dtc_us_per_ft: np.ndarray, rhob_
     twt_s = np.cumsum(dt_s)
     twt_s -= twt_s[0]
 
-    return impedance, reflectivity, twt_s
+    return velocity_m_s, rho_kg_m3, impedance, reflectivity, twt_s
 
 
 def resample_reflectivity(twt_s: np.ndarray, reflectivity: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
@@ -239,7 +253,7 @@ def main() -> None:
         las_path = las_candidates[0]
 
     depth_m, dtc, rhob = load_las_curves(las_path)
-    impedance, reflectivity, twt_s = impedance_reflectivity(depth_m, dtc, rhob)
+    vp_m_s, rho_kg_m3, impedance, reflectivity, twt_s = impedance_reflectivity(depth_m, dtc, rhob)
     t_uniform, r_uniform, dt_s = resample_reflectivity(twt_s, reflectivity)
 
     wavelet, t_wavelet = ricker_wavelet(args.f0, dt_s, args.wavelet_length)
@@ -253,6 +267,8 @@ def main() -> None:
         out_path,
         depth_m=depth_m,
         twt_s=twt_s,
+        vp_m_s=vp_m_s,
+        rho_kg_m3=rho_kg_m3,
         impedance=impedance,
         reflectivity=reflectivity,
         t_uniform=t_uniform,
